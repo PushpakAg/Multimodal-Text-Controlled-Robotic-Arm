@@ -1,0 +1,58 @@
+# ROS specific ignores
+build/
+devel/
+logs/
+.catkin_tools/
+.catkin_workspace
+
+# Compiled Python files
+*.pyc
+
+# Compiled C++ files
+*.o
+*.so
+
+# Temporary files
+*~
+
+# ROS package files
+CATKIN_IGNORE
+
+# Environment files
+.env
+
+# IDE specific files
+.vscode/
+.idea/
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Bag files (often large)
+*.bag
+
+# Generated documentation
+doc/
+
+# Dependency directories (remove if you want to commit these)
+venv/
+env/
+
+# Gazebo model files (if you don't want to track these)
+*.sdf
+*.world
+
+# RViz config files (if you don't want to track these)
+*.rviz
+
+# Ignore all log files
+*.log
+
+# Ignore all text files (modify as needed)
+# *.txt
