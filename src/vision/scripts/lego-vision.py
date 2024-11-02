@@ -424,10 +424,9 @@ def process_CB(image_rgb, image_depth):
     depth = CvBridge().imgmsg_to_cv2(image_depth, "32FC1")
     
     process_image(rgb, depth)
-
-    print("Time:", time.time() - t_start)
-    rospy.signal_shutdown(0)
-    pass
+    
+    print("Processing time:", time.time() - t_start)
+    # Remove the shutdown call to keep processing frames
 
 #init node function
 def start_node():

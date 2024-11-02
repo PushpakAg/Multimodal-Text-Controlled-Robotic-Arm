@@ -1,4 +1,4 @@
-#!/home/pushpak/anaconda3/envs/cmu/bin/python
+#!/usr/bin/python3
 
 import os
 import math
@@ -13,13 +13,8 @@ from pyquaternion import Quaternion as PyQuaternion
 import numpy as np
 from gazebo_ros_link_attacher.srv import SetStatic, SetStaticRequest, SetStaticResponse
 from gazebo_ros_link_attacher.srv import Attach, AttachRequest, AttachResponse
-from openai import OpenAI
-api_key = os.getenv("OPENAI_API_KEY")
-client = OpenAI(api_key=api_key)
 
 PKG_PATH = os.path.dirname(os.path.abspath(__file__))
-
-# picked_lego_name = None
 
 MODELS_INFO = {
     "X1-Y2-Z1": {
@@ -85,7 +80,7 @@ INTERLOCKING_OFFSET = 0.019
 
 SAFE_X = -0.40
 SAFE_Y = -0.13
-SURFACE_Z = 0.774  # Set this to a known safe value for your environment
+SURFACE_Z = 0.774
 
 # Resting orientation of the end effector
 DEFAULT_QUAT = PyQuaternion(axis=(0, 1, 0), angle=math.pi)
@@ -95,10 +90,6 @@ DEFAULT_POS = (-0.1, -0.2, 1.2)
 DEFAULT_PATH_TOLERANCE = control_msgs.msg.JointTolerance()
 DEFAULT_PATH_TOLERANCE.name = "path_tolerance"
 DEFAULT_PATH_TOLERANCE.velocity = 10
-DEFAULT_QUAT = PyQuaternion(axis=(0, 1, 0), angle=math.pi)
-
-# Set up OpenAI API
-# openai.api_key = os.getenv("OPENAI_API_KEY")
 
 def get_gazebo_model_name(model_name, vision_model_pose):
     """
@@ -121,30 +112,21 @@ def get_model_name(gazebo_model_name):
 
 
 def get_legos_pos(vision=False):
+    #get legos position reading vision topic
     if vision:
-        try:
-            print("Attempting to get lego detections from vision...")
-            legos = rospy.wait_for_message("/lego_detections", ModelStates, timeout=5.0)
-            print(f"Received lego detections: {legos}")
-            return [(lego_name, lego_pose) for lego_name, lego_pose in zip(legos.name, legos.pose)]
-        except rospy.ROSException as e:
-            print(f"Timeout waiting for lego detections: {e}")
-            return []
+        legos = rospy.wait_for_message("/lego_detections", ModelStates, timeout=None)
     else:
-        print("Getting model states from Gazebo...")
         models = rospy.wait_for_message("/gazebo/model_states", ModelStates, timeout=None)
         legos = ModelStates()
 
-        print("All Gazebo models:")
         for name, pose in zip(models.name, models.pose):
-            print(f"  {name}: {pose}")
-            if "X" in name:
-                name = get_model_name(name)
-                legos.name.append(name)
-                legos.pose.append(pose)
-        
-        print(f"Filtered Gazebo model states: {legos}")
-        return [(lego_name, lego_pose) for lego_name, lego_pose in zip(legos.name, legos.pose)]
+            if "X" not in name:
+                continue
+            name = get_model_name(name)
+
+            legos.name.append(name)
+            legos.pose.append(pose)
+    return [(lego_name, lego_pose) for lego_name, lego_pose in zip(legos.name, legos.pose)]
 
 
 def straighten(model_pose, gazebo_model_name):
@@ -255,33 +237,16 @@ def close_gripper(gazebo_model_name, closure=0):
 
 
 def open_gripper(gazebo_model_name=None):
-    print(f"Starting open_gripper function for model: {gazebo_model_name}")
-    start_time = time.time()
-    
-    try:
-        set_gripper(0.0)
-        print(f"Gripper set to open position. Time taken: {time.time() - start_time:.2f} seconds")
-    except Exception as e:
-        print(f"Error setting gripper to open position: {e}")
-        return
+    set_gripper(0.0)
 
     # Destroy dynamic joint
     if gazebo_model_name is not None:
-        print(f"Attempting to detach model: {gazebo_model_name}")
-        detach_start_time = time.time()
         req = AttachRequest()
         req.model_name_1 = gazebo_model_name
         req.link_name_1 = "link"
         req.model_name_2 = "robot"
         req.link_name_2 = "wrist_3_link"
-        try:
-            detach_srv.call(req)
-            print(f"Model detached successfully. Time taken: {time.time() - detach_start_time:.2f} seconds")
-        except Exception as e:
-            print(f"Error detaching model: {e}")
-    
-    total_time = time.time() - start_time
-    print(f"open_gripper function completed. Total time: {total_time:.2f} seconds")
+        detach_srv.call(req)
 
 
 def set_model_fixed(model_name):
@@ -374,189 +339,6 @@ def set_gripper(value):
     return action_gripper.get_result()
 
 
-def process_command(command):
-    print(f"Received command: {command}")
-    try:
-        print("Sending request to OpenAI API...")
-        response = client.chat.completions.create(
-            model="gpt-4o",
-            messages=[
-                {"role": "system", "content": "You are an AI assistant controlling a UR5 robot with a Robotiq gripper. The robot can manipulate Lego blocks of different colors and sizes. Respond with a JSON array of steps to execute the given command. Each step should be an object with 'action', 'color', and 'location' fields. Valid actions are 'scan', 'pick', 'place', and 'return_home'."},
-                {"role": "user", "content": command}
-            ]
-        )
-        print("Received response from OpenAI API")
-        content = response.choices[0].message.content
-        print(f"Response content: {content}")
-
-        # Strip out code block markers if present
-        if content.startswith("```") and content.endswith("```"):
-            content = content.strip("```").strip()
-        if content.startswith("json"):
-            content = content[4:].strip()
-
-        print("Parsing JSON response...")
-        steps = json.loads(content)
-        print(f"Parsed steps: {steps}")
-
-        for step in steps:
-            action = step.get('action')
-            color = step.get('color', None)
-            location = step.get('location', None)
-            print(f"Executing step: action={action}, color={color}, location={location}")
-
-            try:
-                if action == 'scan':
-                    scan_environment()
-                elif action == 'pick':
-                    success = pick_lego(color)
-                    if not success:
-                        print("Pick action failed. Stopping command execution.")
-                        break
-                elif action == 'place':
-                    place_lego(color, location)
-                elif action == 'return_home':
-                    return_to_home()
-                else:
-                    print(f"Unrecognized action: {action}")
-            except Exception as e:
-                print(f"Error executing action {action}: {e}")
-                break
-
-    except json.JSONDecodeError as e:
-        print(f"JSON decode error: {e}")
-        print("Raw response content:", content)
-    except Exception as e:
-        print(f"An error occurred: {e}")
-    print("Command processing completed")
-
-picked_lego_name = None
-
-def pick_lego(color):
-    global picked_lego_name, picked_lego_pose
-    legos = scan_environment()
-    if not legos:
-        print("No Legos found in the environment.")
-        return False
-
-    print(f"Searching for a {color} Lego...")
-    target_lego = next((lego for lego in legos if (color is None or color.lower() in ['any', 'unspecified', 'specific'] or color.upper() in lego[0])), None)
-    
-    if target_lego:
-        model_name, model_pose = target_lego
-        print(f"Found target Lego: {model_name} at position {model_pose.position}")
-        gazebo_model_name = get_gazebo_model_name(model_name, model_pose)
-        straighten(model_pose, gazebo_model_name)
-        controller.move(dz=0.15)
-        picked_lego_name = gazebo_model_name
-        picked_lego_pose = model_pose  # Store the picked Lego's pose
-        print(f"Picked up the {model_name} Lego.")
-        return True
-    else:
-        print(f"No {color} Lego found." if color else "No Lego found.")
-        print(f"Available Legos: {[lego[0] for lego in legos]}")
-        return False
-
-import time
-import threading
-
-def open_gripper_async(gazebo_model_name):
-    threading.Thread(target=open_gripper, args=(gazebo_model_name,)).start()
-
-def place_lego(color, location):
-    global picked_lego_name, picked_lego_pose
-    print(f"Starting place_lego function for {color if color else 'unspecified'} Lego")
-    
-    if picked_lego_pose is None:
-        print("Error: No Lego has been picked up.")
-        return
-
-    x = picked_lego_pose.position.x
-    y = picked_lego_pose.position.y
-    z = SURFACE_Z
-    z_place = z + 0.01  # 1 cm above the surface
-    z_up = z + 0.15  # 15 cm above the surface
-
-    print(f"Moving to place Lego: x={x}, y={y}, z={z_place}")
-    controller.move_to(x, y, z_place + 0.05, target_quat=DEFAULT_QUAT)  # Stop 5cm above placement
-
-    print("Initiating gripper opening and final approach")
-    gripper_start_time = time.time()
-    open_gripper_async(picked_lego_name)  # Start opening gripper asynchronously
-    
-    controller.move_to(x, y, z_place, target_quat=DEFAULT_QUAT)  # Complete final approach
-    
-    print("Initiating upward movement")
-    move_up_start_time = time.time()
-    controller.move_to(x, y, z_up, target_quat=DEFAULT_QUAT)
-    move_up_end_time = time.time()
-    
-    print(f"Moved up to z={z_up}. Time taken: {move_up_end_time - move_up_start_time:.2f} seconds")
-    print(f"Total time from initiating gripper opening to completion of upward movement: {move_up_end_time - gripper_start_time:.2f} seconds")
-
-    print(f"Successfully placed the {color if color else ''} Lego on the table at x={x}, y={y}.")
-    picked_lego_name = None
-    picked_lego_pose = None
-    print("place_lego function completed")
-
-def stack_legos(color, location):
-    legos = scan_environment()
-    target_legos = [lego for lego in legos if color.upper() in lego[0]]
-    
-    if len(target_legos) < 2:
-        print(f"Not enough {color} Legos to stack.")
-        return
-    
-    if location == 'right':
-        x, y = 0.5, -0.3
-    elif location == 'left':
-        x, y = -0.5, -0.3
-    else:  # center
-        x, y = 0, -0.3
-    
-    for i, lego in enumerate(target_legos):
-        model_name, model_pose = lego
-        gazebo_model_name = get_gazebo_model_name(model_name, model_pose)
-        straighten(model_pose, gazebo_model_name)
-        controller.move(dz=0.15)
-        
-        z = SURFACE_Z + (i * 0.05)  # Assuming each Lego is about 5cm tall
-        
-        controller.move_to(x, y, z, target_quat=DEFAULT_QUAT)
-        open_gripper(gazebo_model_name)
-        controller.move(dz=0.15)
-    
-    print(f"Stacked {len(target_legos)} {color} Legos at the {location} location.")
-
-def scan_environment():
-    print("Scanning environment...")
-    vision_legos = get_legos_pos(vision=True)
-    if vision_legos:
-        print(f"Detected Legos from vision: {vision_legos}")
-        return vision_legos
-    else:
-        print("No Legos detected by vision system, falling back to Gazebo model states...")
-        gazebo_legos = get_legos_pos(vision=False)
-        print(f"Detected Legos from Gazebo: {gazebo_legos}")
-        return gazebo_legos
-
-def return_to_home():
-    controller.move_to(*DEFAULT_POS, DEFAULT_QUAT)
-    print("Returned to home position.")
-
-def manual_calibrate_surface_height():
-    global SURFACE_Z
-    print(f"Current SURFACE_Z: {SURFACE_Z}")
-    new_z = input("Enter new SURFACE_Z value (or press Enter to keep current): ")
-    if new_z:
-        try:
-            SURFACE_Z = float(new_z)
-            print(f"SURFACE_Z updated to: {SURFACE_Z}")
-        except ValueError:
-            print("Invalid input. SURFACE_Z not changed.")
-    else:
-        print("SURFACE_Z not changed.")
-
 if __name__ == "__main__":
     print("Initializing node of kinematics")
     rospy.init_node("send_joints")
@@ -580,22 +362,51 @@ if __name__ == "__main__":
 
     controller.move_to(*DEFAULT_POS, DEFAULT_QUAT)
 
-    print("Available ROS topics:")
-    topics = rospy.get_published_topics()
-    for topic, topic_type in topics:
-        print(f"  {topic}: {topic_type}")
+    print("Waiting for detection of the models")
+    rospy.sleep(0.5)
+    legos = get_legos_pos(vision=True)
+    legos.sort(reverse=True, key=lambda a: (a[1].position.x, a[1].position.y))
 
-    while not rospy.is_shutdown():
-        command = input("Enter a command: ")
-        if command.lower() == 'exit':
-            break
-        elif command.lower() == 'scan':
-            scan_environment()
-        elif command.lower() == 'return home':
-            return_to_home()
-        elif command.lower() == 'calibrate':
-            manual_calibrate_surface_height()
-        else:
-            process_command(command)
+    for model_name, model_pose in legos:
+        open_gripper()
+        try:
+            model_home = MODELS_INFO[model_name]["home"]
+            model_size = MODELS_INFO[model_name]["size"]
+        except ValueError as e:
+            print(f"Model name {model_name} was not recognized!")
+            continue
 
-    print("Exiting program.")
+        # Get actual model_name at model xyz coordinates
+        try:
+            gazebo_model_name = get_gazebo_model_name(model_name, model_pose)
+        except ValueError as e:
+            print(e)
+            continue
+
+        # Straighten lego
+        straighten(model_pose, gazebo_model_name)
+        controller.move(dz=0.15)
+
+        """
+            Go to destination
+        """
+        x, y, z = model_home
+        z += model_size[2] / 2 +0.004
+        print(f"Moving model {model_name} to {x} {y} {z}")
+
+        controller.move_to(x, y, target_quat=DEFAULT_QUAT * PyQuaternion(axis=[0, 0, 1], angle=math.pi / 2))
+        # Lower the object and release
+        controller.move_to(x, y, z)
+        set_model_fixed(gazebo_model_name)
+        open_gripper(gazebo_model_name)
+        controller.move(dz=0.15)
+
+        if controller.gripper_pose[0][1] > -0.3 and controller.gripper_pose[0][0] > 0:
+            controller.move_to(*DEFAULT_POS, DEFAULT_QUAT)
+
+        # increment z in order to stack lego correctly
+        MODELS_INFO[model_name]["home"][2] += model_size[2] - INTERLOCKING_OFFSET
+    print("Moving to Default Position")
+    controller.move_to(*DEFAULT_POS, DEFAULT_QUAT)
+    open_gripper()
+    rospy.sleep(0.4)
